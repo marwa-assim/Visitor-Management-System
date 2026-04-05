@@ -686,6 +686,13 @@ function doLogin(u){
   applyAccess(u.role);
   applyTheme(S.theme);
   startClock();
+  // Poll inside_now every 15s so staff app stays in sync with kiosk check-ins
+  setInterval(async()=>{
+    if(sbConnected()){
+      await dbLoadInside();
+      updateBadge();
+    }
+  },15000);
   navigate('kiosk');
 }
 function applyAccess(role){
@@ -2189,6 +2196,8 @@ async function initApp(){
     if(page){page.style.display='block';}
     SK.step='action';
     renderSK();
+    // Poll inside_now every 10s so check-ins from admin/other devices are reflected
+    if(sbOk) setInterval(async()=>{ await dbLoadInside(); },10000);
 
   } else {
     // Staff login
@@ -2401,31 +2410,66 @@ function skProceedType(){
   if(!SK.type){alert2('skTypeAlert','error','Please select your visitor type.');return;}
   SK.step='form';renderSK();
 }
-function skVerify(){
+async function skVerify(){
   const id=(document.getElementById('sk_id')?.value||'').trim();
   const cpr=(document.getElementById('sk_cpr')?.value||'').trim();
   if(!id||!cpr){alert2('skFormAlert','error','Please fill in both fields.');return;}
 
+  // Show loading
+  const btn=document.querySelector('#skInner .btn.primary.full.lg');
+  if(btn){btn.textContent='Checking…';btn.disabled=true;}
+
   let found=null;
-  if(SK.type==='student'){
-    found=S.db.students.find(s=>
-      String(s.uid||'').trim()===id &&
-      String(s.cpr||'').trim()===cpr
-    );
-  } else if(SK.type==='staff'){
-    found=S.db.staff.find(s=>
-      (String(s.username||'').trim()===id || String(s.cpr||'').trim()===id) &&
-      String(s.cpr||'').trim()===cpr
-    );
+
+  // Always query Supabase directly for freshest data
+  if(sbConnected()){
+    try{
+      if(SK.type==='student'){
+        const {data}=await SB.from('students').select('*').eq('uid',id).eq('cpr',cpr).limit(1);
+        if(data&&data.length>0) found=data[0];
+      } else if(SK.type==='staff'){
+        // Try username first, then CPR as ID
+        let {data}=await SB.from('staff').select('*').eq('username',id).eq('cpr',cpr).limit(1);
+        if(!data||data.length===0){
+          const res=await SB.from('staff').select('*').eq('cpr',id).eq('cpr',cpr).limit(1);
+          data=res.data;
+        }
+        if(data&&data.length>0) found=data[0];
+      }
+    }catch(e){console.warn('skVerify DB query error:',e);}
   }
 
+  // Fallback to in-memory if Supabase query failed
   if(!found){
-    alert2('skFormAlert','error','❌ No record found with those details. Please check your ID and CPR number carefully, or ask reception for help.');
+    if(SK.type==='student'){
+      found=S.db.students.find(s=>String(s.uid||'').trim()===id&&String(s.cpr||'').trim()===cpr)||null;
+    } else if(SK.type==='staff'){
+      found=S.db.staff.find(s=>(String(s.username||'').trim()===id||String(s.cpr||'').trim()===id)&&String(s.cpr||'').trim()===cpr)||null;
+    }
+  }
+
+  // Restore button
+  if(btn){btn.textContent=`🔍 Verify & ${SK.action==='in'?'Check In':'Check Out'}`;btn.disabled=false;}
+
+  if(!found){
+    alert2('skFormAlert','error','❌ No record found. Please check your ID and CPR number, or ask reception for help.');
     return;
   }
+
+  // For check-out: reload inside_now from Supabase to get latest state
+  if(SK.action==='out'&&sbConnected()){
+    await dbLoadInside();
+  }
+
   const key=(found.uid||found.username)+'_'+SK.type;
   if(SK.action==='in'){
-    if(S.inside[key]){alert2('skFormAlert','warn','⚠ You are already checked in on campus.');return;}
+    // Check inside_now in Supabase directly
+    let alreadyIn=!!S.inside[key];
+    if(!alreadyIn&&sbConnected()){
+      const {data}=await SB.from('inside_now').select('key').eq('key',key).limit(1);
+      alreadyIn=!!(data&&data.length>0);
+    }
+    if(alreadyIn){alert2('skFormAlert','warn','⚠ You are already checked in on campus.');return;}
     S.inside[key]={...found,type:SK.type,checkinTime:new Date()};
     logEntry({...found,type:SK.type},'in');
     dbCheckin(key,{...found,type:SK.type});
