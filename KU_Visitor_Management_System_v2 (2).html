@@ -457,10 +457,20 @@ const S={
 function stopQR(){} // no-op
 
 // ==================== SUPABASE DATABASE LAYER ====================
-let SB=null; // Supabase client — null until configured
+// ==================== SUPABASE CONFIG ====================
+// Set your credentials here — these apply to ALL devices including visitor phones
+// After changing, re-upload the file to Render/GitHub
+const SUPABASE_URL = 'https://fdjfgualrzkjounnolgx.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZkamZndWFscnpram91bm5vbGd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMzA4NjcsImV4cCI6MjA5MDkwNjg2N30.XiHSyRtUwcneW-42SSGdaTZw2uIYZGMxpuvIOpx8Aek';
+
+let SB=null;
 
 function getSBConfig(){
-  try{return JSON.parse(localStorage.getItem('ku_sb_config')||'null');}catch(e){return null;}
+  // Use hardcoded constants first, fall back to localStorage (for admin override)
+  const url = SUPABASE_URL || (()=>{try{return JSON.parse(localStorage.getItem('ku_sb_config')||'null')?.url||'';}catch(e){return '';}})();
+  const key = SUPABASE_KEY || (()=>{try{return JSON.parse(localStorage.getItem('ku_sb_config')||'null')?.key||'';}catch(e){return '';}})();
+  if(!url||!key) return null;
+  return {url,key};
 }
 function saveSBConfig(url,key){
   localStorage.setItem('ku_sb_config',JSON.stringify({url,key}));
@@ -1580,15 +1590,27 @@ async function renderSettings(c){
   let stats=null;
   if(connected) stats=await dbGetStats();
 
+  const isHardcoded = !!(SUPABASE_URL && SUPABASE_KEY);
+  const lsCfg=(()=>{try{return JSON.parse(localStorage.getItem('ku_sb_config')||'null');}catch(e){return null;}})();
+
   const dbSection=connected?`
     <div class="alert ok" style="margin-bottom:12px">✓ Database connected — all data is saved permanently.</div>
+    ${isHardcoded?`<div class="alert info" style="margin-bottom:12px">✓ Credentials are <b>embedded in the file</b> — works on all devices including visitor phones.</div>`:`
+    <div class="alert warn" style="margin-bottom:12px">
+      ⚠ Credentials are saved in <b>this browser only</b> — visitor phones cannot connect.<br><br>
+      <b>To fix:</b> Copy your Supabase URL and key below, open the HTML file in a text editor, find the lines:<br>
+      <span style="font-family:var(--m);font-size:11px;background:var(--bg4);padding:2px 6px;border-radius:3px;display:inline-block;margin:4px 0">const SUPABASE_URL = '';</span><br>
+      <span style="font-family:var(--m);font-size:11px;background:var(--bg4);padding:2px 6px;border-radius:3px;display:inline-block;margin:4px 0">const SUPABASE_KEY = '';</span><br>
+      Paste your credentials between the quotes → save → re-upload to GitHub → Render auto-deploys.
+    </div>`}
     <div class="pg c4" style="margin-bottom:12px">
       <div style="text-align:center;padding:10px;background:var(--bg3);border-radius:var(--rs)"><div style="font-size:20px;font-weight:700;color:var(--info)">${stats?stats.students:'—'}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">Students</div></div>
       <div style="text-align:center;padding:10px;background:var(--bg3);border-radius:var(--rs)"><div style="font-size:20px;font-weight:700;color:var(--ok)">${stats?stats.staff:'—'}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">Staff</div></div>
       <div style="text-align:center;padding:10px;background:var(--bg3);border-radius:var(--rs)"><div style="font-size:20px;font-weight:700;color:var(--warn)">${stats?stats.guests:'—'}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">Guests</div></div>
       <div style="text-align:center;padding:10px;background:var(--bg3);border-radius:var(--rs)"><div style="font-size:20px;font-weight:700;color:var(--purple)">${stats?stats.logs:'—'}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">Log Events</div></div>
     </div>
-    <button class="btn sm danger ghost" onclick="if(confirm('Disconnect database?')){clearSBConfig();navigate('settings');}">Disconnect Database</button>`
+    ${!isHardcoded?`<button class="btn sm danger ghost" onclick="if(confirm('Disconnect database?')){clearSBConfig();navigate('settings');}">Disconnect</button>`:''}
+    `
   :`
     <div class="alert warn" style="margin-bottom:14px"><b>No database connected.</b> Data is lost on page refresh.</div>
     <div class="card inset" style="margin-bottom:14px">
@@ -2217,7 +2239,7 @@ function renderSK(){
     c.innerHTML=`
     <div class="sk-card">
       <div style="text-align:center;margin-bottom:18px">
-        <div style="font-size:22px;font-weight:700;margin-bottom:4px">Welcome to Kingdom University</div>
+        <div style="font-size:22px;font-weight:700;margin-bottom:4px">Welcome 👋</div>
         <div style="font-size:13px;color:var(--text2)">Are you arriving or leaving?</div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px">
@@ -2298,7 +2320,7 @@ function renderSK(){
         </div>
         <div id="skFormAlert"></div>
         <div class="field">
-          <label>${isS?'Student ID Number':'Username'}</label>
+          <label>${isS?'Student ID Number':'Username or CPR Number'}</label>
           <input id="sk_id" type="text" placeholder="Enter your ID" inputmode="${isS?'numeric':'text'}" autocomplete="off"/>
         </div>
         <div class="field">
