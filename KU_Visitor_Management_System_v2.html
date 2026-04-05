@@ -526,15 +526,20 @@ async function dbLoadAll(){
 
 // ---- DB READ: load currently inside from inside_now table ----
 async function dbLoadInside(){
-  if(!sbConnected()) return;
+  // Use freshSB so this works even if SB global failed to init
+  const url=SUPABASE_URL, key=SUPABASE_KEY;
+  if(!url||!key||!window.supabase) return;
   try{
-    const {data,error}=await SB.from('inside_now').select('*');
-    if(error) return;
+    const freshSB=supabase.createClient(url,key);
+    const {data,error}=await freshSB.from('inside_now').select('*');
+    if(error){console.warn('dbLoadInside error:',error.message);return;}
+    // Rebuild S.inside from DB — this is the authoritative source
     S.inside={};
     (data||[]).forEach(row=>{
       try{S.inside[row.key]={...JSON.parse(row.person_json),checkinTime:new Date(row.checkin_time)};}
       catch(e){}
     });
+    updateBadge();
   }catch(e){console.warn('dbLoadInside:',e);}
 }
 
@@ -678,6 +683,8 @@ function loginAD(){
 }
 function doLogin(u){
   S.user=u;
+  // Save session to localStorage so refresh doesn't log out
+  try{localStorage.setItem('ku_session',JSON.stringify(u));}catch(e){}
   document.getElementById('loginPage').style.display='none';
   document.getElementById('mainApp').style.display='flex';
   document.getElementById('uAvatar').textContent=u.name.charAt(0).toUpperCase();
@@ -686,13 +693,8 @@ function doLogin(u){
   applyAccess(u.role);
   applyTheme(S.theme);
   startClock();
-  // Poll inside_now every 15s so staff app stays in sync with kiosk check-ins
-  setInterval(async()=>{
-    if(sbConnected()){
-      await dbLoadInside();
-      updateBadge();
-    }
-  },15000);
+  // Sync inside_now every 20s
+  setInterval(async()=>{ await dbLoadInside(); },20000);
   navigate('kiosk');
 }
 function applyAccess(role){
@@ -706,6 +708,7 @@ function applyAccess(role){
 }
 function logout(){
   S.user=null;
+  try{localStorage.removeItem('ku_session');}catch(e){}
   document.getElementById('mainApp').style.display='none';
   document.getElementById('loginPage').style.display='flex';
   document.getElementById('loginAlert').innerHTML='';
@@ -1290,7 +1293,20 @@ function showDetail(r){
 }
 
 // ==================== ACTIVITY LOG ====================
-function renderLog(c){
+async function renderLog(c){
+  // Always reload from Supabase before rendering
+  if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
+    try{
+      const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+      const {data}=await freshSB.from('access_log').select('*').order('timestamp',{ascending:false}).limit(1000);
+      if(data) S.log=data.map(r=>({
+        name:r.person_name,type:r.type,action:r.action,
+        time:new Date(r.timestamp),uid:r.uid||'',
+        dept:r.dept||'',cpr:r.cpr||'',
+        purpose:r.purpose||'',host:r.host||''
+      }));
+    }catch(e){}
+  }
   c.innerHTML=`
   <div class="card">
     <div class="sh"><div><div class="st">Full Activity Log</div><div class="ss">${S.log.length} total events recorded</div></div>
@@ -2224,8 +2240,18 @@ async function initApp(){
     if(sbOk) setInterval(async()=>{ await dbLoadInside(); },10000);
 
   } else {
-    // Staff login
+    // Staff mode — try to restore session from localStorage
     hideAll();
+    try{
+      const saved=localStorage.getItem('ku_session');
+      if(saved){
+        const u=JSON.parse(saved);
+        if(u&&u.username&&u.role&&ROLES[u.username]){
+          doLogin(u);
+          return;
+        }
+      }
+    }catch(e){}
     const lp=document.getElementById('loginPage');
     if(lp) lp.style.display='flex';
   }
@@ -2315,7 +2341,7 @@ function renderSK(){
     c.innerHTML=`
     <div class="sk-card">
       <div style="text-align:center;margin-bottom:18px">
-        <div style="font-size:22px;font-weight:700;margin-bottom:4px">Welcome to Kingdom University</div>
+        <div style="font-size:20px;font-weight:700;margin-bottom:4px">Welcome to Kingdom University</div>
         <div style="font-size:13px;color:var(--text2)">Are you arriving or leaving?</div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px">
