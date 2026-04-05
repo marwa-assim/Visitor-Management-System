@@ -1056,8 +1056,8 @@ function verifyPerson(){
   const cpr=document.getElementById('k2').value.trim();
   if(!id||!cpr){alert2('kfAlert','error','Please enter both ID and CPR fields.');return;}
   let found=null;
-  if(S.kType==='student') found=S.db.students.find(s=>s.uid===id&&s.cpr===cpr);
-  else if(S.kType==='staff') found=S.db.staff.find(s=>(s.username===id||s.cpr===id)&&s.cpr===cpr);
+  if(S.kType==='student') found=S.db.students.find(s=>String(s.uid||'').trim()===id&&String(s.cpr||'').trim()===cpr);
+  else if(S.kType==='staff') found=S.db.staff.find(s=>(String(s.username||'').trim()===id||String(s.cpr||'').trim()===id)&&String(s.cpr||'').trim()===cpr);
   if(!found){
     alert2('kfAlert','error',`❌ No ${S.kType} found matching those credentials. Please check the ID and CPR, or contact reception for assistance.`);
     return;
@@ -2174,8 +2174,23 @@ async function initApp(){
     hideAll();
     const page=document.getElementById('selfKioskPage');
     if(page){page.style.display='block';}
-    SK.step='action';
-    renderSK();
+    // Show loading while Supabase data loads, then render
+    const skInner=document.getElementById('skInner');
+    if(skInner){
+      if(sbOk){
+        skInner.innerHTML=`<div style="text-align:center;padding:60px 20px">
+          <div style="font-size:32px;margin-bottom:12px">⏳</div>
+          <div style="font-size:15px;font-weight:600;color:var(--text)">Loading campus data…</div>
+          <div style="font-size:13px;color:var(--text3);margin-top:6px">Please wait a moment</div>
+        </div>`;
+        await Promise.all([dbLoadAll(),dbLoadInside(),dbLoadLog()]);
+      }
+      SK.step='action';
+      renderSK();
+    } else {
+      SK.step='action';
+      renderSK();
+    }
 
   } else {
     // Staff login
@@ -2269,7 +2284,7 @@ function renderSK(){
     c.innerHTML=`
     <div class="sk-card">
       <div style="text-align:center;margin-bottom:18px">
-        <div style="font-size:22px;font-weight:700;margin-bottom:4px">Welcome to Kingdom University</div>
+        <div style="font-size:22px;font-weight:700;margin-bottom:4px">Welcome 👋</div>
         <div style="font-size:13px;color:var(--text2)">Are you arriving or leaving?</div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px">
@@ -2392,10 +2407,33 @@ function skVerify(){
   const id=(document.getElementById('sk_id')?.value||'').trim();
   const cpr=(document.getElementById('sk_cpr')?.value||'').trim();
   if(!id||!cpr){alert2('skFormAlert','error','Please fill in both fields.');return;}
+
+  // Check if DB loaded
+  if(SK.type==='student'&&S.db.students.length===0){
+    alert2('skFormAlert','warn','⏳ Database still loading, please wait a moment and try again.');return;
+  }
+  if(SK.type==='staff'&&S.db.staff.length===0){
+    alert2('skFormAlert','warn','⏳ Database still loading, please wait a moment and try again.');return;
+  }
+
   let found=null;
-  if(SK.type==='student') found=S.db.students.find(s=>s.uid===id&&s.cpr===cpr);
-  else if(SK.type==='staff') found=S.db.staff.find(s=>(s.username===id||s.cpr===id)&&s.cpr===cpr);
-  if(!found){alert2('skFormAlert','error',`❌ No ${SK.type} found with those details. Please check your ID and CPR, or ask reception for help.`);return;}
+  // Compare as strings with trim to handle type mismatches from Supabase
+  if(SK.type==='student'){
+    found=S.db.students.find(s=>
+      String(s.uid||'').trim()===id &&
+      String(s.cpr||'').trim()===cpr
+    );
+  } else if(SK.type==='staff'){
+    found=S.db.staff.find(s=>
+      (String(s.username||'').trim()===id || String(s.cpr||'').trim()===id) &&
+      String(s.cpr||'').trim()===cpr
+    );
+  }
+
+  if(!found){
+    alert2('skFormAlert','error','❌ No record found with those details. Please check your ID and CPR number carefully, or ask reception for help.');
+    return;
+  }
   const key=(found.uid||found.username)+'_'+SK.type;
   if(SK.action==='in'){
     if(S.inside[key]){alert2('skFormAlert','warn','⚠ You are already checked in on campus.');return;}
