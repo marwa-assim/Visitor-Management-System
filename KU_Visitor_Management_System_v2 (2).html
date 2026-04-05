@@ -879,7 +879,7 @@ function renderKioskStep(){
       </div>
       <div id="kfAlert"></div>
       <div class="field"><label>${isS?'Student ID Number':isSt?'Username or CPR':'ID Number'}</label>
-        <input id="k1" type="text" placeholder="Enter your ID" autofocus/>
+        <input id="k1" type="text" placeholder="Enter your ID - ex: 202510010" autofocus/>
       </div>
       <div class="field"><label>CPR Number</label><input id="k2" type="text" placeholder="9-digit CPR number" maxlength="9"/></div>
       <div id="kPersonResult"></div>
@@ -2299,7 +2299,7 @@ function renderSK(){
         <div id="skFormAlert"></div>
         <div class="field">
           <label>${isS?'Student ID Number':'Username'}</label>
-          <input id="sk_id" type="text" placeholder="Enter your ID" inputmode="${isS?'numeric':'text'}" autocomplete="off"/>
+          <input id="sk_id" type="text" placeholder="Enter your ID - ex: 202510020" inputmode="${isS?'numeric':'text'}" autocomplete="off"/>
         </div>
         <div class="field">
           <label>CPR Number</label>
