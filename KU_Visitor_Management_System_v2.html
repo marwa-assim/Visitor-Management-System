@@ -2441,47 +2441,64 @@ async function skVerify(){
 
   const btn=document.querySelector('#skInner .btn.primary.full.lg');
   if(btn){btn.textContent='Verifying…';btn.disabled=true;}
-
   const restore=()=>{if(btn){btn.textContent=`🔍 Verify & ${SK.action==='in'?'Check In':'Check Out'}`;btn.disabled=false;}};
 
-  let found=null;
+  // Show debug info on screen
+  const debugEl=document.getElementById('skFormAlert');
+  const dbg=(msg)=>{if(debugEl)debugEl.innerHTML=`<div class="alert info" style="font-size:11px;font-family:var(--m)">${msg}</div>`;};
 
-  // Always create a fresh Supabase client directly from hardcoded constants
-  // This works even if initSupabase() failed — completely independent
+  dbg(`Checking: ID="${id}" CPR="${cpr}" Type="${SK.type}"<br>SB_URL set: ${!!SUPABASE_URL}<br>supabase lib: ${!!window.supabase}<br>SB connected: ${sbConnected()}`);
+
+  let found=null;
+  let dbError='';
+
   try{
     if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
       const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+      dbg(`Querying Supabase table: ${SK.type==='student'?'students':'staff'}…`);
       if(SK.type==='student'){
         const {data,error}=await freshSB.from('students').select('*').eq('uid',id).eq('cpr',cpr).limit(1);
+        dbg(`Student query result: data=${JSON.stringify(data)} error=${JSON.stringify(error)}`);
         if(data&&data.length>0) found=data[0];
+        if(error) dbError=error.message;
       } else if(SK.type==='staff'){
-        let {data}=await freshSB.from('staff').select('*').eq('username',id).eq('cpr',cpr).limit(1);
-        if(!data||!data.length){
-          const r=await freshSB.from('staff').select('*').eq('cpr',id).limit(1);
-          if(r.data&&r.data.length&&String(r.data[0].cpr||'').trim()===cpr) data=r.data;
-        }
+        const {data,error}=await freshSB.from('staff').select('*').eq('username',id).eq('cpr',cpr).limit(1);
+        dbg(`Staff query result: data=${JSON.stringify(data)} error=${JSON.stringify(error)}`);
         if(data&&data.length>0) found=data[0];
+        if(error) dbError=error.message;
+        if(!found){
+          const r=await freshSB.from('staff').select('*').eq('cpr',id).limit(1);
+          dbg(`Staff CPR query: data=${JSON.stringify(r.data)}`);
+          if(r.data&&r.data.length&&String(r.data[0].cpr||'').trim()===cpr) found=r.data[0];
+        }
       }
+    } else {
+      dbError=`Missing: URL=${!!SUPABASE_URL} KEY=${!!SUPABASE_KEY} lib=${!!window.supabase}`;
     }
-  }catch(e){console.warn('Direct SB query failed:',e);}
+  }catch(e){
+    dbError=e.message||String(e);
+    dbg(`Exception: ${dbError}`);
+  }
 
-  // Fallback: in-memory (loaded at startup)
+  // Fallback to in-memory
   if(!found){
+    const memCount=SK.type==='student'?S.db.students.length:S.db.staff.length;
+    dbg(`DB query returned nothing (${dbError}). Memory has ${memCount} records. Trying memory…`);
     if(SK.type==='student') found=S.db.students.find(s=>String(s.uid||'').trim()===id&&String(s.cpr||'').trim()===cpr)||null;
     else if(SK.type==='staff') found=S.db.staff.find(s=>(String(s.username||'').trim()===id||String(s.cpr||'').trim()===id)&&String(s.cpr||'').trim()===cpr)||null;
+    dbg(`Memory lookup: ${found?'FOUND '+found.name:'NOT FOUND'} | DB error was: ${dbError||'none'}`);
   }
 
   restore();
 
   if(!found){
-    alert2('skFormAlert','error','❌ No record found. Check your ID and CPR, or ask reception.');
+    alert2('skFormAlert','error',`❌ Not found.<br><small>ID: ${id} | CPR: ${cpr} | Type: ${SK.type}<br>DB error: ${dbError||'none'} | Memory records: ${SK.type==='student'?S.db.students.length:S.db.staff.length}</small>`);
     return;
   }
 
   const key=(found.uid||found.username)+'_'+SK.type;
 
   if(SK.action==='in'){
-    // Check if already inside using fresh query
     let alreadyIn=!!S.inside[key];
     if(!alreadyIn&&SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
       try{
@@ -2495,7 +2512,6 @@ async function skVerify(){
     logEntry({...found,type:SK.type},'in');
     dbCheckin(key,{...found,type:SK.type});
   } else {
-    // For checkout: reload inside_now fresh
     try{
       if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
         const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
