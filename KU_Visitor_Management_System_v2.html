@@ -522,28 +522,37 @@ async function dbLoadAll(){
       freshSB.from('staff').select('*'),
       freshSB.from('guests').select('*')
     ]);
-    if(sr.data&&sr.data.length>0) S.db.students=sr.data;
-    if(str.data&&str.data.length>0) S.db.staff=str.data;
-    if(gr.data&&gr.data.length>0) S.db.guests=gr.data;
-    console.log('dbLoadAll: students=',S.db.students.length,'staff=',S.db.staff.length);
+    if(sr.error) console.error('Load students error:',sr.error.message);
+    else S.db.students=sr.data||[];
+    if(str.error) console.error('Load staff error:',str.error.message);
+    else S.db.staff=str.data||[];
+    if(gr.error) console.error('Load guests error:',gr.error.message);
+    else S.db.guests=gr.data||[];
+    console.log('dbLoadAll: students=',S.db.students.length,'staff=',S.db.staff.length,'guests=',S.db.guests.length);
   }catch(e){console.warn('dbLoadAll error:',e);}
 }
 
 // ---- DB READ: load currently inside from inside_now table ----
 async function dbLoadInside(){
-  // Use freshSB so this works even if SB global failed to init
-  const url=SUPABASE_URL, key=SUPABASE_KEY;
-  if(!url||!key||!window.supabase) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
   try{
-    const freshSB=supabase.createClient(url,key);
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
     const {data,error}=await freshSB.from('inside_now').select('*');
     if(error){console.warn('dbLoadInside error:',error.message);return;}
-    // Rebuild S.inside from DB — this is the authoritative source
-    S.inside={};
-    (data||[]).forEach(row=>{
-      try{S.inside[row.key]={...JSON.parse(row.person_json),checkinTime:new Date(row.checkin_time)};}
+    if(!data) return;
+    // Only update if Supabase returned data (never clear to empty from a poll)
+    if(data.length===0 && Object.keys(S.inside).length>0){
+      // Supabase returned empty but we have local data — skip to avoid flicker
+      // This happens when dbCheckin hasn't committed yet
+      return;
+    }
+    // Rebuild from Supabase — authoritative source
+    const newInside={};
+    data.forEach(row=>{
+      try{newInside[row.key]={...JSON.parse(row.person_json),checkinTime:new Date(row.checkin_time)};}
       catch(e){}
     });
+    S.inside=newInside;
     updateBadge();
   }catch(e){console.warn('dbLoadInside:',e);}
 }
@@ -616,30 +625,40 @@ async function dbSaveGuest(g){
 
 // ---- DB WRITE: bulk upsert students from Excel import ----
 async function dbUpsertStudents(rows){
-  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase){
+    console.warn('dbUpsertStudents: Supabase not configured');
+    return false;
+  }
   try{
     const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
     const chunks=[];
     for(let i=0;i<rows.length;i+=100) chunks.push(rows.slice(i,i+100));
     for(const chunk of chunks){
-      await freshSB.from('students').upsert(chunk,{onConflict:'uid'});
+      const {error}=await freshSB.from('students').upsert(chunk,{onConflict:'uid'});
+      if(error){console.error('dbUpsertStudents error:',error);return false;}
     }
-    console.log('Upserted',rows.length,'students to Supabase');
-  }catch(e){console.warn('dbUpsertStudents:',e);}
+    console.log('✓ Saved',rows.length,'students to Supabase');
+    return true;
+  }catch(e){console.error('dbUpsertStudents exception:',e);return false;}
 }
 
 // ---- DB WRITE: bulk upsert staff from Excel import ----
 async function dbUpsertStaff(rows){
-  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase){
+    console.warn('dbUpsertStaff: Supabase not configured');
+    return false;
+  }
   try{
     const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
     const chunks=[];
     for(let i=0;i<rows.length;i+=100) chunks.push(rows.slice(i,i+100));
     for(const chunk of chunks){
-      await freshSB.from('staff').upsert(chunk,{onConflict:'username'});
+      const {error}=await freshSB.from('staff').upsert(chunk,{onConflict:'username'});
+      if(error){console.error('dbUpsertStaff error:',error);return false;}
     }
-    console.log('Upserted',rows.length,'staff to Supabase');
-  }catch(e){console.warn('dbUpsertStaff:',e);}
+    console.log('✓ Saved',rows.length,'staff to Supabase');
+    return true;
+  }catch(e){console.error('dbUpsertStaff exception:',e);return false;}
 }
 
 // ---- DB STATUS ----
@@ -717,8 +736,7 @@ function doLogin(u){
   applyAccess(u.role);
   applyTheme(S.theme);
   startClock();
-  // Sync inside_now every 20s
-  setInterval(async()=>{ await dbLoadInside(); },20000);
+  // Sync inside_now when user navigates to dashboard (on demand, not polling)
   navigate('kiosk');
 }
 function applyAccess(role){
@@ -769,8 +787,16 @@ function navigate(page){
   if(ni) ni.classList.add('active');
   document.getElementById('topTitle').textContent=PTITLES[page]||page;
   const c=document.getElementById('mc');
-  ({kiosk:renderKiosk,dashboard:renderDashboard,search:renderSearch,log:renderLog,reports:renderReports,advanced:renderAdvanced,upload:renderUpload,dbmanage:renderDBManage,adguide:renderADGuide,settings:renderSettings})[page]?.(c);
-  updateBadge();
+  // Sync inside_now from DB when viewing live pages — no polling needed
+  if(page==='dashboard'||page==='kiosk'){
+    dbLoadInside().then(()=>{
+      ({kiosk:renderKiosk,dashboard:renderDashboard,search:renderSearch,log:renderLog,reports:renderReports,advanced:renderAdvanced,upload:renderUpload,dbmanage:renderDBManage,adguide:renderADGuide,settings:renderSettings})[page]?.(c);
+      updateBadge();
+    });
+  } else {
+    ({kiosk:renderKiosk,dashboard:renderDashboard,search:renderSearch,log:renderLog,reports:renderReports,advanced:renderAdvanced,upload:renderUpload,dbmanage:renderDBManage,adguide:renderADGuide,settings:renderSettings})[page]?.(c);
+    updateBadge();
+  }
 }
 function updateBadge(){
   const n=Object.keys(S.inside).length;
@@ -1609,6 +1635,17 @@ function exportModalReport(){exportAdvXLSX();}
 // ==================== UPLOAD ====================
 function renderUpload(c){
   c.innerHTML=`
+  <div class="alert warn" style="margin-bottom:14px">
+    <b>⚠ Important — Run this SQL in Supabase first if data is not saving:</b><br>
+    Go to <b>Supabase → SQL Editor</b> and run:<br>
+    <span style="font-family:var(--m);font-size:11px;background:var(--bg4);padding:4px 8px;border-radius:4px;display:inline-block;margin-top:6px;line-height:2">
+      alter table students disable row level security;<br>
+      alter table staff disable row level security;<br>
+      alter table guests disable row level security;<br>
+      alter table access_log disable row level security;<br>
+      alter table inside_now disable row level security;
+    </span>
+  </div>
   <div class="pg c2">
     <div class="card">
       <div class="sh"><div><div class="st">Import Students</div><div class="ss">Upload roster Excel file</div></div></div>
@@ -1651,38 +1688,51 @@ function renderUpload(c){
 }
 let upTarget='';
 function trigUp(t){upTarget=t;document.getElementById('fi').click();}
-function handleUpload(e){
+async function handleUpload(e){
   const file=e.target.files[0];if(!file) return;
   const reader=new FileReader();
-  reader.onload=function(ev){
+  reader.onload=async function(ev){
     try{
       const wb=XLSX.read(ev.target.result,{type:'binary'});
       const ws=wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
       if(!rows.length){showUpRes(upTarget,'error','File is empty.');return;}
       let imp=0,sk=0;
+      const entries=[];
       if(upTarget==='student'){
         rows.forEach(r=>{
           const uid=str(r.uid||r.UID||r['Student ID']);const name=str(r.name||r.Name||r['Full Name']);const cpr=str(r.cpr||r.CPR);
           if(!uid||!name||!cpr){sk++;return;}
-          const idx=S.db.students.findIndex(s=>s.uid===uid);
           const entry={uid,name,college:str(r.college||r.College),major:str(r.major||r.Major),cpr,mobile:str(r.mobile||r.Mobile)};
-          idx>=0?S.db.students[idx]=entry:S.db.students.push(entry);imp++;
+          const idx=S.db.students.findIndex(s=>s.uid===uid);
+          idx>=0?S.db.students[idx]=entry:S.db.students.push(entry);
+          entries.push(entry);imp++;
         });
-        showUpRes('student','ok',`✓ ${imp} students imported, ${sk} rows skipped.`);
-        dbUpsertStudents(S.db.students);
+        showUpRes('student','info',`Saving ${imp} students to database…`);
+        const ok=await dbUpsertStudents(entries);
+        if(ok){
+          showUpRes('student','ok',`✓ ${imp} students saved to database permanently. ${sk} rows skipped.`);
+        } else {
+          showUpRes('student','warn',`⚠ ${imp} students loaded in memory but database save failed. Check Supabase connection in System Settings.`);
+        }
       } else {
         rows.forEach(r=>{
           const username=str(r.username||r.Username);const name=str(r.name||r.Name||r['Full Name']);const cpr=str(r.cpr||r.CPR);
           if(!username||!name||!cpr){sk++;return;}
-          const idx=S.db.staff.findIndex(s=>s.username===username);
           const entry={username,name,dept:str(r.dept||r.Dept||r.Department),college:str(r.college||r.College),cpr,mobile:str(r.mobile||r.Mobile)};
-          idx>=0?S.db.staff[idx]=entry:S.db.staff.push(entry);imp++;
+          const idx=S.db.staff.findIndex(s=>s.username===username);
+          idx>=0?S.db.staff[idx]=entry:S.db.staff.push(entry);
+          entries.push(entry);imp++;
         });
-        showUpRes('staff','ok',`✓ ${imp} staff imported, ${sk} rows skipped.`);
-        dbUpsertStaff(S.db.staff);
+        showUpRes('staff','info',`Saving ${imp} staff to database…`);
+        const ok=await dbUpsertStaff(entries);
+        if(ok){
+          showUpRes('staff','ok',`✓ ${imp} staff saved to database permanently. ${sk} rows skipped.`);
+        } else {
+          showUpRes('staff','warn',`⚠ ${imp} staff loaded in memory but database save failed. Check Supabase connection in System Settings.`);
+        }
       }
-    }catch(err){showUpRes(upTarget,'error','Failed to parse file. Check format.');}
+    }catch(err){showUpRes(upTarget,'error','Failed to parse file: '+err.message);}
     e.target.value='';
   };
   reader.readAsBinaryString(file);
