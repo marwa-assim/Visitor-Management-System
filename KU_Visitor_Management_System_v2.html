@@ -297,9 +297,12 @@ tr:last-child td{border-bottom:none} tr:hover td{background:var(--bg3)}
       Sign in with Microsoft Active Directory
     </button>
     <div class="divider">or use local credentials</div>
-    <div class="field"><label>Username</label><input id="lUser" type="text" placeholder="Username" placeholder="Username"/></div>
+    <div class="field"><label>Username</label><input id="lUser" type="text" placeholder="Username"/></div>
     <div class="field"><label>Password</label><input id="lPass" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')loginLocal()"/></div>
-
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <input type="checkbox" id="rememberMe" style="width:16px;height:16px;cursor:pointer;accent-color:var(--ku)"/>
+      <label for="rememberMe" style="font-size:13px;color:var(--text2);cursor:pointer;margin:0">Remember me</label>
+    </div>
     <button class="btn primary full lg" onclick="loginLocal()">Sign In →</button>
   </div>
 </div>
@@ -511,16 +514,18 @@ async function initSupabase(){
 
 // ---- DB READ: load all students, staff, guests into S.db ----
 async function dbLoadAll(){
-  if(!sbConnected()) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
   try{
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
     const [sr,str,gr]=await Promise.all([
-      SB.from('students').select('*'),
-      SB.from('staff').select('*'),
-      SB.from('guests').select('*')
+      freshSB.from('students').select('*'),
+      freshSB.from('staff').select('*'),
+      freshSB.from('guests').select('*')
     ]);
-    if(sr.data) S.db.students=sr.data;
-    if(str.data) S.db.staff=str.data;
-    if(gr.data) S.db.guests=gr.data;
+    if(sr.data&&sr.data.length>0) S.db.students=sr.data;
+    if(str.data&&str.data.length>0) S.db.staff=str.data;
+    if(gr.data&&gr.data.length>0) S.db.guests=gr.data;
+    console.log('dbLoadAll: students=',S.db.students.length,'staff=',S.db.staff.length);
   }catch(e){console.warn('dbLoadAll error:',e);}
 }
 
@@ -545,23 +550,27 @@ async function dbLoadInside(){
 
 // ---- DB READ: load activity log ----
 async function dbLoadLog(limit=500){
-  if(!sbConnected()) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
   try{
-    const {data}=await SB.from('access_log').select('*').order('timestamp',{ascending:false}).limit(limit);
-    S.log=(data||[]).map(r=>({
-      name:r.person_name,type:r.type,action:r.action,
-      time:new Date(r.timestamp),uid:r.uid||'',
-      dept:r.dept||'',cpr:r.cpr||'',
-      purpose:r.purpose||'',host:r.host||''
-    }));
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+    const {data}=await freshSB.from('access_log').select('*').order('timestamp',{ascending:false}).limit(limit);
+    if(data&&data.length>0){
+      S.log=data.map(r=>({
+        name:r.person_name,type:r.type,action:r.action,
+        time:new Date(r.timestamp),uid:r.uid||'',
+        dept:r.dept||'',cpr:r.cpr||'',
+        purpose:r.purpose||'',host:r.host||''
+      }));
+    }
   }catch(e){console.warn('dbLoadLog:',e);}
 }
 
 // ---- DB WRITE: log a check-in or check-out event ----
 async function dbLogEntry(p,action){
-  if(!sbConnected()) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
   try{
-    await SB.from('access_log').insert({
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+    await freshSB.from('access_log').insert({
       person_name:p.name,type:p.type,action,
       uid:p.uid||p.username||p.cpr||'',
       dept:p.dept||p.college||p.org||'',
@@ -573,9 +582,10 @@ async function dbLogEntry(p,action){
 
 // ---- DB WRITE: mark person as inside ----
 async function dbCheckin(key,person){
-  if(!sbConnected()) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
   try{
-    await SB.from('inside_now').upsert({
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+    await freshSB.from('inside_now').upsert({
       key,person_json:JSON.stringify(person),
       checkin_time:new Date().toISOString()
     },{onConflict:'key'});
@@ -584,16 +594,19 @@ async function dbCheckin(key,person){
 
 // ---- DB WRITE: remove person from inside ----
 async function dbCheckout(key){
-  if(!sbConnected()) return;
-  try{await SB.from('inside_now').delete().eq('key',key);}
-  catch(e){console.warn('dbCheckout:',e);}
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
+  try{
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+    await freshSB.from('inside_now').delete().eq('key',key);
+  }catch(e){console.warn('dbCheckout:',e);}
 }
 
 // ---- DB WRITE: save a guest record ----
 async function dbSaveGuest(g){
-  if(!sbConnected()) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
   try{
-    const {data}=await SB.from('guests').insert({
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+    const {data}=await freshSB.from('guests').insert({
       name:g.name,cpr:g.cpr,org:g.org||'',
       purpose:g.purpose||'',host:g.host||''
     }).select();
@@ -603,37 +616,42 @@ async function dbSaveGuest(g){
 
 // ---- DB WRITE: bulk upsert students from Excel import ----
 async function dbUpsertStudents(rows){
-  if(!sbConnected()) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
   try{
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
     const chunks=[];
     for(let i=0;i<rows.length;i+=100) chunks.push(rows.slice(i,i+100));
     for(const chunk of chunks){
-      await SB.from('students').upsert(chunk,{onConflict:'uid'});
+      await freshSB.from('students').upsert(chunk,{onConflict:'uid'});
     }
+    console.log('Upserted',rows.length,'students to Supabase');
   }catch(e){console.warn('dbUpsertStudents:',e);}
 }
 
 // ---- DB WRITE: bulk upsert staff from Excel import ----
 async function dbUpsertStaff(rows){
-  if(!sbConnected()) return;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
   try{
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
     const chunks=[];
     for(let i=0;i<rows.length;i+=100) chunks.push(rows.slice(i,i+100));
     for(const chunk of chunks){
-      await SB.from('staff').upsert(chunk,{onConflict:'username'});
+      await freshSB.from('staff').upsert(chunk,{onConflict:'username'});
     }
+    console.log('Upserted',rows.length,'staff to Supabase');
   }catch(e){console.warn('dbUpsertStaff:',e);}
 }
 
 // ---- DB STATUS ----
 async function dbGetStats(){
-  if(!sbConnected()) return null;
+  if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return null;
   try{
+    const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
     const [sc,stc,gc,lc]=await Promise.all([
-      SB.from('students').select('*',{count:'exact',head:true}),
-      SB.from('staff').select('*',{count:'exact',head:true}),
-      SB.from('guests').select('*',{count:'exact',head:true}),
-      SB.from('access_log').select('*',{count:'exact',head:true})
+      freshSB.from('students').select('*',{count:'exact',head:true}),
+      freshSB.from('staff').select('*',{count:'exact',head:true}),
+      freshSB.from('guests').select('*',{count:'exact',head:true}),
+      freshSB.from('access_log').select('*',{count:'exact',head:true})
     ]);
     return{students:sc.count||0,staff:stc.count||0,guests:gc.count||0,logs:lc.count||0};
   }catch(e){return null;}
@@ -675,6 +693,12 @@ function loginLocal(){
   const p=document.getElementById('lPass').value.trim();
   const acc=ROLES[u];
   if(!acc||acc.pass!==p){alert2('loginAlert','error','Invalid username or password.');return;}
+  const remember=document.getElementById('rememberMe')?.checked;
+  if(remember){
+    try{localStorage.setItem('ku_remember',JSON.stringify({u,p}));}catch(e){}
+  } else {
+    try{localStorage.removeItem('ku_remember');}catch(e){}
+  }
   doLogin({username:u,name:acc.name,role:acc.role,method:'local'});
 }
 function loginAD(){
@@ -1981,10 +2005,10 @@ async function saveStudent(idx){
   const entry={uid,name,college,major,cpr,mobile};
   if(isNew){
     S.db.students.push(entry);
-    if(sbConnected()) await SB.from('students').insert(entry);
+    if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){const fSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);await fSB.from('students').insert(entry);}
   } else {
     S.db.students[idx]=entry;
-    if(sbConnected()) await SB.from('students').update({name,college,major,cpr,mobile}).eq('uid',uid);
+    if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){const fSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);await fSB.from('students').update({name,college,major,cpr,mobile}).eq('uid',uid);}
   }
   closeModal('detailModal');
   renderDBManage(document.getElementById('mc'));
@@ -2025,10 +2049,10 @@ async function saveStaff(idx){
   const entry={username,name,dept,college,cpr,mobile};
   if(isNew){
     S.db.staff.push(entry);
-    if(sbConnected()) await SB.from('staff').insert(entry);
+    if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){const fSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);await fSB.from('staff').insert(entry);}
   } else {
     S.db.staff[idx]=entry;
-    if(sbConnected()) await SB.from('staff').update({name,dept,college,cpr,mobile}).eq('username',username);
+    if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){const fSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);await fSB.from('staff').update({name,dept,college,cpr,mobile}).eq('username',username);}
   }
   closeModal('detailModal');
   renderDBManage(document.getElementById('mc'));
@@ -2043,9 +2067,9 @@ async function deleteRecord(type,idx){
   if(!confirm(`Delete "${label}"? This cannot be undone.`)) return;
   list.splice(idx,1);
   if(sbConnected()){
-    if(type==='student') await SB.from('students').delete().eq('uid',rec.uid);
-    else if(type==='staff') await SB.from('staff').delete().eq('username',rec.username);
-    else if(type==='guest') await SB.from('guests').delete().eq('id',rec.id);
+    if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){const fSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);if(type==='student') await fSB.from('students').delete().eq('uid',rec.uid);
+    else if(type==='staff') await fSB.from('staff').delete().eq('username',rec.username);
+    else if(type==='guest') await fSB.from('guests').delete().eq('id',rec.id);}
   }
   renderDBManage(document.getElementById('mc'));
 }
@@ -2250,6 +2274,18 @@ async function initApp(){
           doLogin(u);
           return;
         }
+      }
+    }catch(e){}
+    // Auto-fill remembered credentials
+    try{
+      const rem=JSON.parse(localStorage.getItem('ku_remember')||'null');
+      if(rem&&rem.u){
+        const lu=document.getElementById('lUser');
+        const lp=document.getElementById('lPass');
+        const cb=document.getElementById('rememberMe');
+        if(lu) lu.value=rem.u;
+        if(lp) lp.value=rem.p||'';
+        if(cb) cb.checked=true;
       }
     }catch(e){}
     const lp=document.getElementById('loginPage');
