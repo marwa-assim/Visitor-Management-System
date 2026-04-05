@@ -483,17 +483,30 @@ function sbConnected(){return SB!==null;}
 
 async function initSupabase(){
   const cfg=getSBConfig();
-  if(!cfg||!cfg.url||!cfg.key) return false;
+  if(!cfg||!cfg.url||!cfg.key){
+    console.log('Supabase: no config found');
+    return false;
+  }
   try{
     SB=supabase.createClient(cfg.url,cfg.key);
-    // Test connection
-    const {error}=await SB.from('access_log').select('id').limit(1);
-    if(error&&error.code!=='PGRST116'&&error.code!=='42P01'){
-      console.warn('Supabase test failed:',error.message);
-      SB=null; return false;
+    // Quick connection test — use students table which we know exists
+    const {data,error}=await SB.from('students').select('uid').limit(1);
+    if(error){
+      // If error is just "no rows" that's fine — table exists
+      // Only fail on actual connection/auth errors
+      const fatal=['invalid_api_key','JWT','401','403','ENOTFOUND','NetworkError'];
+      const isFatal=fatal.some(f=>JSON.stringify(error).includes(f));
+      if(isFatal){
+        console.warn('Supabase fatal error:',error.message);
+        SB=null; return false;
+      }
     }
+    console.log('Supabase connected. Students loaded:',data?.length||0);
     return true;
-  }catch(e){SB=null;return false;}
+  }catch(e){
+    console.warn('Supabase init exception:',e.message);
+    SB=null; return false;
+  }
 }
 
 // ---- DB READ: load all students, staff, guests into S.db ----
@@ -2153,7 +2166,7 @@ async function initApp(){
   const savedTheme=localStorage.getItem('ku_theme')||'dark';
   document.documentElement.setAttribute('data-theme',savedTheme);
 
-  // Connect Supabase if configured
+  // Connect Supabase and load data (all modes)
   const sbOk=await initSupabase();
   if(sbOk){
     await Promise.all([dbLoadAll(),dbLoadInside(),dbLoadLog()]);
@@ -2174,23 +2187,8 @@ async function initApp(){
     hideAll();
     const page=document.getElementById('selfKioskPage');
     if(page){page.style.display='block';}
-    // Show loading while Supabase data loads, then render
-    const skInner=document.getElementById('skInner');
-    if(skInner){
-      if(sbOk){
-        skInner.innerHTML=`<div style="text-align:center;padding:60px 20px">
-          <div style="font-size:32px;margin-bottom:12px">⏳</div>
-          <div style="font-size:15px;font-weight:600;color:var(--text)">Loading campus data…</div>
-          <div style="font-size:13px;color:var(--text3);margin-top:6px">Please wait a moment</div>
-        </div>`;
-        await Promise.all([dbLoadAll(),dbLoadInside(),dbLoadLog()]);
-      }
-      SK.step='action';
-      renderSK();
-    } else {
-      SK.step='action';
-      renderSK();
-    }
+    SK.step='action';
+    renderSK();
 
   } else {
     // Staff login
@@ -2408,16 +2406,7 @@ function skVerify(){
   const cpr=(document.getElementById('sk_cpr')?.value||'').trim();
   if(!id||!cpr){alert2('skFormAlert','error','Please fill in both fields.');return;}
 
-  // Check if DB loaded
-  if(SK.type==='student'&&S.db.students.length===0){
-    alert2('skFormAlert','warn','⏳ Database still loading, please wait a moment and try again.');return;
-  }
-  if(SK.type==='staff'&&S.db.staff.length===0){
-    alert2('skFormAlert','warn','⏳ Database still loading, please wait a moment and try again.');return;
-  }
-
   let found=null;
-  // Compare as strings with trim to handle type mismatches from Supabase
   if(SK.type==='student'){
     found=S.db.students.find(s=>
       String(s.uid||'').trim()===id &&
