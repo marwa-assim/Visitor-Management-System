@@ -971,55 +971,85 @@ function generateKioskQR(){
 }
 function printKioskQR(){
   const kioskUrl=getKioskUrl();
-  if(!kioskUrl){alert('Cannot print QR — the app must be hosted on a web server first.');return;}
+  if(!kioskUrl){alert('Set the deployment URL first in System Settings.');return;}
   const img=document.querySelector('#kioskQR img');
-  if(!img||!img.src){alert('QR code not ready yet. Please wait a moment and try again.');return;}
+  if(!img||!img.src){alert('QR code not generated yet — click Refresh first.');return;}
 
-  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>KU Campus Access QR</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:Segoe UI,Arial,sans-serif;background:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center}
-    .wrap{text-align:center;padding:40px 48px}
-    .hdr{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:24px}
-    .hdr-icon{width:52px;height:52px;background:#1a3a6b;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-    .hdr-text h1{font-size:20px;font-weight:700;color:#1a3a6b;text-align:left}
-    .hdr-text p{font-size:12px;color:#888;text-align:left}
-    .qr-box{background:#fff;border:2px solid #e8e8e8;border-radius:16px;padding:20px;display:inline-block;margin:8px 0 20px}
-    .qr-box img{display:block;width:220px;height:220px}
-    h2{font-size:20px;font-weight:700;color:#1a3a6b;margin-bottom:8px}
-    .sub{font-size:14px;color:#555;margin-bottom:10px}
-    .url{font-size:11px;color:#aaa;font-family:monospace;word-break:break-all;max-width:320px;margin:0 auto 24px}
-    .steps{display:flex;gap:24px;justify-content:center;margin-top:8px}
-    .step{font-size:12px;color:#666;text-align:center;width:90px}
-    .snum{width:30px;height:30px;background:#1a3a6b;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;margin:0 auto 6px}
-    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-  </style></head><body><div class="wrap">
+  // Remove any existing print overlay
+  const old=document.getElementById('_printOverlay');
+  if(old) old.remove();
+
+  // Build a full-page print overlay injected into the current document
+  const overlay=document.createElement('div');
+  overlay.id='_printOverlay';
+  overlay.innerHTML=`
+  <style id="_printStyle">
+    #_printOverlay{display:none}
+    @media print{
+      body > *:not(#_printOverlay){display:none!important}
+      #_printOverlay{display:block!important;position:fixed;inset:0;background:#fff;z-index:99999;font-family:Segoe UI,Arial,sans-serif}
+      #_printOverlay .wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:40px;text-align:center}
+      #_printOverlay .hdr{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:20px}
+      #_printOverlay .ku-icon{width:52px;height:52px;background:#1a3a6b;border-radius:10px;display:flex;align-items:center;justify-content:center}
+      #_printOverlay h1{font-size:20px;font-weight:700;color:#1a3a6b;margin:0;text-align:left}
+      #_printOverlay .ku-sub{font-size:12px;color:#888;margin:0;text-align:left}
+      #_printOverlay .qr-box{border:2px solid #e0e0e0;border-radius:16px;padding:20px;margin:10px 0 18px;display:inline-block}
+      #_printOverlay .qr-box img{display:block;width:240px;height:240px}
+      #_printOverlay h2{font-size:22px;font-weight:700;color:#1a3a6b;margin-bottom:8px}
+      #_printOverlay .sub{font-size:14px;color:#555;margin-bottom:8px}
+      #_printOverlay .url{font-size:11px;color:#bbb;font-family:monospace;word-break:break-all;max-width:340px;margin:0 auto 24px}
+      #_printOverlay .steps{display:flex;gap:28px;justify-content:center}
+      #_printOverlay .step{font-size:12px;color:#666;text-align:center;width:90px}
+      #_printOverlay .snum{width:32px;height:32px;background:#1a3a6b;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;margin:0 auto 6px}
+      #_printOverlay .close-btn{display:none}
+      -webkit-print-color-adjust:exact;print-color-adjust:exact;
+    }
+    @media screen{
+      #_printOverlay.show{display:flex!important;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;align-items:center;justify-content:center}
+      #_printOverlay .wrap{background:#fff;border-radius:16px;padding:36px 48px;text-align:center;max-width:480px;width:100%;position:relative;max-height:90vh;overflow-y:auto}
+      #_printOverlay .ku-icon{width:44px;height:44px;background:#1a3a6b;border-radius:8px;display:flex;align-items:center;justify-content:center}
+      #_printOverlay h1{font-size:17px;font-weight:700;color:#1a3a6b;margin:0;text-align:left}
+      #_printOverlay .ku-sub{font-size:11px;color:#888;margin:0;text-align:left}
+      #_printOverlay .hdr{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:16px}
+      #_printOverlay .qr-box{border:2px solid #e0e0e0;border-radius:12px;padding:16px;margin:8px 0 14px;display:inline-block}
+      #_printOverlay .qr-box img{display:block;width:200px;height:200px}
+      #_printOverlay h2{font-size:18px;font-weight:700;color:#1a3a6b;margin-bottom:6px}
+      #_printOverlay .sub{font-size:13px;color:#555;margin-bottom:6px}
+      #_printOverlay .url{font-size:10px;color:#bbb;font-family:monospace;word-break:break-all;margin:0 auto 18px}
+      #_printOverlay .steps{display:flex;gap:20px;justify-content:center;margin-bottom:20px}
+      #_printOverlay .step{font-size:11px;color:#666;text-align:center;width:80px}
+      #_printOverlay .snum{width:28px;height:28px;background:#1a3a6b;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;margin:0 auto 5px}
+      #_printOverlay .close-btn{position:absolute;top:12px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:#999;line-height:1}
+      #_printOverlay .btn-row{display:flex;gap:10px;justify-content:center}
+      #_printOverlay .p-btn{padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none}
+      #_printOverlay .p-btn.primary{background:#1a3a6b;color:#fff}
+      #_printOverlay .p-btn.ghost{background:#f0f0f0;color:#555}
+    }
+  </style>
+  <div class="wrap">
+    <button class="close-btn" onclick="document.getElementById('_printOverlay').remove()">✕</button>
     <div class="hdr">
-      <div class="hdr-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg></div>
-      <div class="hdr-text"><h1>Kingdom University</h1><p>Campus Access Management System</p></div>
+      <div class="ku-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg></div>
+      <div><h1>Kingdom University</h1><p class="ku-sub">Campus Access Management System</p></div>
     </div>
-    <div class="qr-box"><img src="${img.src}"/></div>
+    <div class="qr-box"><img src="${img.src}" alt="QR Code"/></div>
     <h2>Scan to Check In / Out</h2>
-    <p class="sub">Point your smartphone camera at the QR code above</p>
+    <p class="sub">Point your smartphone camera at the QR code</p>
     <p class="url">${kioskUrl}</p>
     <div class="steps">
-      <div class="step"><div class="snum">1</div>Open your phone camera</div>
-      <div class="step"><div class="snum">2</div>Scan the QR code</div>
-      <div class="step"><div class="snum">3</div>Follow the steps</div>
+      <div class="step"><div class="snum">1</div>Open camera</div>
+      <div class="step"><div class="snum">2</div>Scan QR code</div>
+      <div class="step"><div class="snum">3</div>Follow steps</div>
     </div>
-  </div>
-  <script>window.onload=function(){window.print();}<\/script>
-  </body></html>`;
+    <div class="btn-row">
+      <button class="p-btn ghost" onclick="document.getElementById('_printOverlay').remove()">Cancel</button>
+      <button class="p-btn primary" onclick="window.print()">🖨 Print Now</button>
+    </div>
+  </div>`;
 
-  // Use data URI — works without popup blocker, no srcdoc issues
-  const dataUri='data:text/html;charset=utf-8,'+encodeURIComponent(html);
-  const a=document.createElement('a');
-  a.href=dataUri;
-  a.target='_blank';
-  a.rel='noopener';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  document.body.appendChild(overlay);
+  // Show as modal on screen, print hides everything else
+  setTimeout(()=>overlay.classList.add('show'),10);
 }
 function verifyPerson(){
   const id=document.getElementById('k1').value.trim();
