@@ -623,16 +623,30 @@ async function dbCheckout(key){
   }catch(e){console.warn('dbCheckout:',e);}
 }
 
-// ---- DB WRITE: save a guest record ----
+// ---- DB WRITE: save/update a guest record — upsert by CPR for uniqueness ----
 async function dbSaveGuest(g){
   if(!SUPABASE_URL||!SUPABASE_KEY||!window.supabase) return;
   try{
     const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-    const {data}=await freshSB.from('guests').insert({
-      name:g.name,cpr:g.cpr,org:g.org||'',
-      purpose:g.purpose||'',host:g.host||''
-    }).select();
-    if(data&&data[0]) S.db.guests.push(data[0]);
+    // Check if guest with this CPR already exists
+    const {data:existing}=await freshSB.from('guests').select('id').eq('cpr',g.cpr).limit(1);
+    if(existing&&existing.length>0){
+      // Update existing record with latest info
+      await freshSB.from('guests').update({
+        name:g.name,org:g.org||'',
+        purpose:g.purpose||'',host:g.host||''
+      }).eq('cpr',g.cpr);
+      // Update in memory too
+      const idx=S.db.guests.findIndex(r=>r.cpr===g.cpr);
+      if(idx>=0) S.db.guests[idx]={...S.db.guests[idx],name:g.name,org:g.org||'',purpose:g.purpose||'',host:g.host||''};
+    } else {
+      // New guest — insert
+      const {data}=await freshSB.from('guests').insert({
+        name:g.name,cpr:g.cpr,org:g.org||'',
+        purpose:g.purpose||'',host:g.host||''
+      }).select();
+      if(data&&data[0]) S.db.guests.push(data[0]);
+    }
   }catch(e){console.warn('dbSaveGuest:',e);}
 }
 
@@ -940,7 +954,7 @@ function renderKioskStep(){
               <div class="type-icon">🎓</div><div class="type-lbl">Student</div><div class="type-sub">University ID</div>
             </div>
             <div class="type-card ${S.kType==='staff'?'sel':''}" onclick="setKT('staff')">
-              <div class="type-icon">💼</div><div class="type-lbl">Staff</div><div class="type-sub">CPR</div>
+              <div class="type-icon">💼</div><div class="type-lbl">Staff</div><div class="type-sub">CPR Number</div>
             </div>
             <div class="type-card ${S.kType==='guest'?'sel':''}" onclick="setKT('guest')">
               <div class="type-icon">👤</div><div class="type-lbl">Guest</div><div class="type-sub">External Visitor</div>
@@ -967,8 +981,8 @@ function renderKioskStep(){
     stopQR();
     if(S.kType==='guest'&&S.kAction==='in'){openModal('guestModal');S.kStep='type';renderKioskStep();return;}
     const isS=S.kType==='student',isSt=S.kType==='staff';
-    const fieldLabel=isS?'Student ID':isSt?'CPR Number':'ID Number';
-    const fieldPlaceholder=isS?'Enter Student ID':isSt?'Enter CPR number (include leading zeros)':'Enter ID';
+    const fieldLabel=isS?'University ID':isSt?'CPR Number':'ID Number';
+    const fieldPlaceholder=isS?'Enter University ID':isSt?'Enter CPR number (include leading zeros)':'Enter ID';
     ki.innerHTML=`
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
@@ -1250,13 +1264,14 @@ function renderDashboard(c){
     <div class="card">
       <div class="sh"><div class="st">Currently On Campus</div><button class="btn sm" onclick="navigate('search')">View All</button></div>
       ${ins.length===0?`<div class="empty">No one checked in yet</div>`:`<div class="tbl-wrap"><table>
-        <thead><tr><th>Name</th><th>Type</th><th>College / Dept</th><th>Since</th></tr></thead>
-        <tbody>${ins.map(p=>`<tr>
+        <thead><tr><th>Name</th><th>Type</th><th>College / Dept</th><th>Since</th><th style="width:90px"></th></tr></thead>
+        <tbody>${ins.map((p,i)=>{const key=Object.keys(S.inside).find(k=>S.inside[k]===p)||'';return`<tr>
           <td style="font-weight:600">${p.name}</td>
           <td><span class="badge ${p.type}">${p.type}</span></td>
           <td style="color:var(--text2)">${p.college||p.dept||p.org||'—'}</td>
           <td style="font-family:var(--m);font-size:11px;color:var(--text3)">${p.checkinTime?p.checkinTime.toLocaleTimeString('en-BH',{hour:'2-digit',minute:'2-digit'}):'—'}</td>
-        </tr>`).join('')}</tbody>
+          <td><button class="btn sm danger" onclick="adminCheckout('${key}')">Check Out</button></td>
+        </tr>`;}).join('')}</tbody>
       </table></div>`}
     </div>
     <div class="card">
@@ -1270,6 +1285,17 @@ function renderDashboard(c){
         </div>`).join('')}</div>`}
     </div>
   </div>`;
+}
+
+async function adminCheckout(key){
+  if(!key||!S.inside[key]){alert('This person is not currently checked in.');return;}
+  const p=S.inside[key];
+  if(!confirm('Check out '+p.name+'?')) return;
+  logEntry({...p},'out');
+  dbCheckout(key);
+  delete S.inside[key];
+  updateBadge();
+  navigate('dashboard');
 }
 
 // ==================== SEARCH ====================
@@ -2003,11 +2029,26 @@ function renderGuestTable(list){
   return`
   <div class="sh" style="margin-bottom:12px">
     <div><div class="st">Guests</div><div class="ss">${list.length} registered visitors</div></div>
+    ${list.length>0?`<div style="display:flex;gap:8px">
+      <button class="btn sm danger" onclick="bulkDeleteGuests()">🗑 Delete All Guests</button>
+    </div>`:''}
   </div>
   <div class="tbl-wrap"><table>
     <thead><tr><th>Name</th><th>CPR / ID</th><th>Organization</th><th>Purpose</th><th>Host</th><th style="width:60px"></th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
+}
+
+async function bulkDeleteGuests(){
+  if(!confirm('Delete ALL '+S.db.guests.length+' guest records from the database? This cannot be undone.')) return;
+  try{
+    if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
+      const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+      await freshSB.from('guests').delete().neq('id',0); // delete all rows
+    }
+    S.db.guests=[];
+    renderDBManage(document.getElementById('mc'));
+  }catch(e){alert('Delete failed: '+e.message);}
 }
 
 function filterDBTable(q,type){
@@ -2494,7 +2535,7 @@ function renderSK(){
           <div class="sk-type-icon">🎓</div><div class="sk-type-lbl">Student</div><div class="sk-type-sub">University ID</div>
         </div>
         <div class="sk-type ${SK.type==='staff'?'sel':''}" onclick="setSKType('staff')">
-          <div class="sk-type-icon">💼</div><div class="sk-type-lbl">Staff</div><div class="sk-type-sub">CPR</div>
+          <div class="sk-type-icon">💼</div><div class="sk-type-lbl">Staff</div><div class="sk-type-sub">CPR Number</div>
         </div>
         <div class="sk-type ${SK.type==='guest'?'sel':''}" onclick="setSKType('guest')">
           <div class="sk-type-icon">👤</div><div class="sk-type-lbl">Guest</div><div class="sk-type-sub">External Visitor</div>
@@ -2556,8 +2597,8 @@ function renderSK(){
       const savedKey='ku_identity_'+SK.type;
       let saved=null;
       try{saved=JSON.parse(localStorage.getItem(savedKey)||'null');}catch(e){}
-      const fieldLabel=isS?'Student ID':'CPR Number';
-      const fieldPlaceholder=isS?'Enter your Student ID':'Enter your CPR (include leading zeros)';
+      const fieldLabel=isS?'University ID':'CPR Number';
+      const fieldPlaceholder=isS?'Enter your University ID':'Enter your CPR (include leading zeros)';
       const savedVal=isS?(saved?.uid||''):(saved?.cpr||'');
       c.innerHTML=`
       <div class="sk-card">
