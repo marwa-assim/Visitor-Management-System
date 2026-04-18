@@ -2505,6 +2505,9 @@ function renderSK(){
     </div>`;
   } else if(SK.step==='form'){
     if(SK.type==='guest'&&SK.action==='in'){
+      let savedGuest=null;
+      try{savedGuest=JSON.parse(localStorage.getItem('ku_identity_guest')||'null');}catch(e){}
+      const sg=savedGuest||{};
       c.innerHTML=`
       <div class="sk-card">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
@@ -2512,20 +2515,26 @@ function renderSK(){
           <div style="font-size:14px;font-weight:700">Guest Registration</div>
         </div>
         <div id="skFormAlert"></div>
-        <div class="field"><label>Full Name *</label><input id="sk_gName" type="text" placeholder="Your full name" autocomplete="name"/></div>
-        <div class="field"><label>CPR / ID / Passport *</label><input id="sk_gCPR" type="text" placeholder="National ID, CPR, or passport" inputmode="numeric"/></div>
-        <div class="field"><label>Organization (optional)</label><input id="sk_gOrg" type="text" placeholder="Company or institution"/></div>
+        <div class="field"><label>Full Name *</label><input id="sk_gName" type="text" placeholder="Your full name" autocomplete="name" value="${sg.name||''}"/></div>
+        <div class="field"><label>CPR / ID / Passport *</label><input id="sk_gCPR" type="text" inputmode="text" placeholder="National ID, CPR, or passport" value="${sg.cpr||''}"/></div>
+        <div class="field"><label>Organization (optional)</label><input id="sk_gOrg" type="text" placeholder="Company or institution" value="${sg.org||''}"/></div>
         <div class="field"><label>Purpose of Visit</label>
           <select id="sk_gPurpose">
-            <option value="Meeting">Meeting</option><option value="Interview">Interview</option>
-            <option value="Delivery">Delivery</option><option value="Event">Event / Conference</option>
-            <option value="Academic">Academic / Research</option><option value="Other">Other</option>
+            <option value="Meeting" ${sg.purpose==='Meeting'?'selected':''}>Meeting</option>
+            <option value="Interview" ${sg.purpose==='Interview'?'selected':''}>Interview</option>
+            <option value="Delivery" ${sg.purpose==='Delivery'?'selected':''}>Delivery</option>
+            <option value="Event" ${sg.purpose==='Event'?'selected':''}>Event / Conference</option>
+            <option value="Academic" ${sg.purpose==='Academic'?'selected':''}>Academic / Research</option>
+            <option value="Other" ${sg.purpose==='Other'||!sg.purpose?'selected':''}>Other</option>
           </select>
         </div>
-        <div class="field"><label>Visiting (staff name or dept)</label><input id="sk_gHost" type="text" placeholder="Who are you visiting?"/></div>
+        <div class="field"><label>Visiting (staff name or dept)</label><input id="sk_gHost" type="text" placeholder="Who are you visiting?" value="${sg.host||''}"/></div>
         <button class="btn success full lg" onclick="skSubmitGuest()">✓ Register &amp; Check In</button>
       </div>`;
     } else if(SK.type==='guest'&&SK.action==='out'){
+      let savedGuest=null;
+      try{savedGuest=JSON.parse(localStorage.getItem('ku_identity_guest')||'null');}catch(e){}
+      const savedCPR=savedGuest?.cpr||'';
       c.innerHTML=`
       <div class="sk-card">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
@@ -2533,9 +2542,14 @@ function renderSK(){
           <div style="font-size:14px;font-weight:700">Guest Check Out</div>
         </div>
         <div id="skFormAlert"></div>
-        <div class="field"><label>CPR / ID / Passport Number</label><input id="sk_gOutCPR" type="text" placeholder="The ID you used to check in" inputmode="numeric"/></div>
-        <button class="btn danger full lg" onclick="skGuestCheckout()">Check Out →</button>
+        <div class="field">
+          <label>CPR / ID / Passport Number</label>
+          <input id="sk_gOutCPR" type="text" inputmode="text" placeholder="The ID you used to check in" value="${savedCPR}" style="font-size:18px;padding:12px;text-align:center;letter-spacing:2px"/>
+          ${savedCPR?`<div class="hint" style="text-align:center;margin-top:4px">Saved from your check-in — clear to enter a different ID</div>`:''}
+        </div>
+        <button class="btn danger full lg" onclick="skGuestCheckout()">✓ Check Out</button>
       </div>`;
+      setTimeout(()=>{const f=document.getElementById('sk_gOutCPR');if(f){f.focus();f.select();}},100);
     } else {
       const isS=SK.type==='student';
       // Load saved identity from this phone's localStorage
@@ -2699,10 +2713,12 @@ function skSubmitGuest(){
   if(S.inside[key]){alert2('skFormAlert','warn','You are already checked in.');return;}
   const g={name,cpr,org:org||'Individual Visitor',purpose,host,type:'guest',uid:key,checkinTime:new Date()};
   if(!sbConnected()) S.db.guests.push({...g,id:Date.now()});
-  else dbSaveGuest(g); // persist guest to Supabase
+  else dbSaveGuest(g);
   S.inside[key]={...g};
   logEntry({...g},'in');
   dbCheckin(key,{...g});
+  // Save ALL guest info permanently — pre-fills next visit
+  try{localStorage.setItem('ku_identity_guest',JSON.stringify({cpr,name,org:org||'Individual Visitor',purpose,host}));}catch(e){}
   SK.person=g;SK.step='success';
   updateBadge();refreshQRDisplay();renderSK();
 }
