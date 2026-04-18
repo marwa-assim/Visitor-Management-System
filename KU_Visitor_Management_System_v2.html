@@ -937,10 +937,10 @@ function renderKioskStep(){
           <div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:8px;letter-spacing:.3px">VISITOR TYPE</div>
           <div class="type-grid">
             <div class="type-card ${S.kType==='student'?'sel':''}" onclick="setKT('student')">
-              <div class="type-icon">🎓</div><div class="type-lbl">Student</div><div class="type-sub">University ID + CPR</div>
+              <div class="type-icon">🎓</div><div class="type-lbl">Student</div><div class="type-sub">University ID</div>
             </div>
             <div class="type-card ${S.kType==='staff'?'sel':''}" onclick="setKT('staff')">
-              <div class="type-icon">💼</div><div class="type-lbl">Staff</div><div class="type-sub">Username or CPR</div>
+              <div class="type-icon">💼</div><div class="type-lbl">Staff</div><div class="type-sub">CPR</div>
             </div>
             <div class="type-card ${S.kType==='guest'?'sel':''}" onclick="setKT('guest')">
               <div class="type-icon">👤</div><div class="type-lbl">Guest</div><div class="type-sub">External Visitor</div>
@@ -2494,7 +2494,7 @@ function renderSK(){
           <div class="sk-type-icon">🎓</div><div class="sk-type-lbl">Student</div><div class="sk-type-sub">University ID</div>
         </div>
         <div class="sk-type ${SK.type==='staff'?'sel':''}" onclick="setSKType('staff')">
-          <div class="sk-type-icon">💼</div><div class="sk-type-lbl">Staff</div><div class="sk-type-sub">Username / CPR</div>
+          <div class="sk-type-icon">💼</div><div class="sk-type-lbl">Staff</div><div class="sk-type-sub">CPR</div>
         </div>
         <div class="sk-type ${SK.type==='guest'?'sel':''}" onclick="setSKType('guest')">
           <div class="sk-type-icon">👤</div><div class="sk-type-lbl">Guest</div><div class="sk-type-sub">External Visitor</div>
