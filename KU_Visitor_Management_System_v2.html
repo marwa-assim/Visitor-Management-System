@@ -954,6 +954,8 @@ function renderKioskStep(){
     stopQR();
     if(S.kType==='guest'&&S.kAction==='in'){openModal('guestModal');S.kStep='type';renderKioskStep();return;}
     const isS=S.kType==='student',isSt=S.kType==='staff';
+    const fieldLabel=isS?'Student ID':isSt?'CPR Number':'ID Number';
+    const fieldPlaceholder=isS?'Enter Student ID':isSt?'Enter CPR number (include leading zeros)':'Enter ID';
     ki.innerHTML=`
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
@@ -961,16 +963,13 @@ function renderKioskStep(){
         <div class="st">${S.kAction==='in'?'Check In':'Check Out'} <span class="badge ${S.kType}">${S.kType}</span></div>
       </div>
       <div id="kfAlert"></div>
-      <div class="field"><label>${isS?'Student ID Number':isSt?'Username or CPR':'ID Number'}</label>
-        <input id="k1" type="text" placeholder="Enter your ID" autofocus/>
+      <div class="field"><label>${fieldLabel}</label>
+        <input id="k1" type="text" inputmode="text" placeholder="${fieldPlaceholder}" autofocus style="font-size:16px;padding:10px;letter-spacing:1px"/>
       </div>
-      <div class="field"><label>CPR Number</label><input id="k2" type="text" placeholder="9-digit CPR number" maxlength="9"/></div>
       <div id="kPersonResult"></div>
-      <button class="btn primary full lg" onclick="verifyPerson()">🔍 Verify &amp; ${S.kAction==='in'?'Check In':'Check Out'}</button>
-
+      <button class="btn primary full lg" onclick="verifyPerson()">✓ ${S.kAction==='in'?'Check In':'Check Out'}</button>
     </div>`;
-    const k2=document.getElementById('k2');
-    if(k2) k2.focus();
+    setTimeout(()=>{const f=document.getElementById('k1');if(f)f.focus();},100);
   } else if(S.kStep==='success'){
     stopQR();
     const p=S.kPerson,isIn=S.kAction==='in';
@@ -1125,24 +1124,26 @@ function printKioskQR(){
   setTimeout(()=>overlay.classList.add('show'),10);
 }
 async function verifyPerson(){
-  const id=document.getElementById('k1').value.trim();
-  const cpr=document.getElementById('k2').value.trim();
-  if(!id||!cpr){alert2('kfAlert','error','Please enter both ID and CPR fields.');return;}
+  const val=document.getElementById('k1').value.trim();
+  if(!val){alert2('kfAlert','error',`Please enter the ${S.kType==='student'?'Student ID':'CPR number'}.`);return;}
 
   let found=null;
 
-  // Query Supabase directly — same as kiosk phone
+  // Query Supabase directly with single field
   try{
     if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
       const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
       if(S.kType==='student'){
-        const {data}=await freshSB.from('students').select('*').eq('uid',id).eq('cpr',cpr).limit(1);
+        // Student: lookup by Student ID only
+        const {data}=await freshSB.from('students').select('*').eq('uid',val).limit(1);
         if(data&&data.length>0) found=data[0];
       } else if(S.kType==='staff'){
-        let {data}=await freshSB.from('staff').select('*').eq('username',id).eq('cpr',cpr).limit(1);
-        if(!data||!data.length){
-          const r=await freshSB.from('staff').select('*').eq('cpr',id).limit(1);
-          if(r.data&&r.data.length&&String(r.data[0].cpr||'').trim()===cpr) data=r.data;
+        // Staff: lookup by CPR only — try exact then zero-padded
+        let {data}=await freshSB.from('staff').select('*').eq('cpr',val).limit(1);
+        if((!data||!data.length)&&val.length<9){
+          const padded=val.padStart(9,'0');
+          const r=await freshSB.from('staff').select('*').eq('cpr',padded).limit(1);
+          if(r.data&&r.data.length>0) data=r.data;
         }
         if(data&&data.length>0) found=data[0];
       }
@@ -1151,25 +1152,32 @@ async function verifyPerson(){
 
   // Fallback to in-memory
   if(!found){
-    if(S.kType==='student') found=S.db.students.find(s=>String(s.uid||'').trim()===id&&String(s.cpr||'').trim()===cpr);
-    else if(S.kType==='staff') found=S.db.staff.find(s=>(String(s.username||'').trim()===id||String(s.cpr||'').trim()===id)&&String(s.cpr||'').trim()===cpr);
+    if(S.kType==='student'){
+      found=S.db.students.find(s=>String(s.uid||'').trim()===val)||null;
+    } else if(S.kType==='staff'){
+      found=S.db.staff.find(s=>String(s.cpr||'').trim()===val)||null;
+      if(!found&&val.length<9){
+        const padded=val.padStart(9,'0');
+        found=S.db.staff.find(s=>String(s.cpr||'').trim()===padded)||null;
+      }
+    }
   }
 
   if(!found){
-    alert2('kfAlert','error',`❌ No ${S.kType} found matching those credentials. Please check the ID and CPR, or contact reception for assistance.`);
+    alert2('kfAlert','error',`❌ No ${S.kType} found with that ${S.kType==='student'?'Student ID':'CPR number'}. Please check and try again.`);
     return;
   }
-  const key=(found.uid||found.username)+'_'+S.kType;
+  const key=(found.uid||found.username||found.cpr)+'_'+S.kType;
   if(S.kAction==='in'){
     if(S.inside[key]){alert2('kfAlert','warn','⚠ This person is already checked in on campus.');return;}
     found.type=S.kType;found.checkinTime=new Date();
     S.inside[key]={...found};
     logEntry({...found,type:S.kType},'in');
-    dbCheckin(key,{...found}); // persist to Supabase
+    dbCheckin(key,{...found});
   } else {
     if(!S.inside[key]){alert2('kfAlert','warn','⚠ This person does not have an active check-in.');return;}
     logEntry({...S.inside[key]},'out');
-    dbCheckout(key); // remove from Supabase inside_now
+    dbCheckout(key);
     delete S.inside[key];
   }
   S.kPerson={...found,type:S.kType};S.kStep='success';
@@ -2074,7 +2082,24 @@ function openStaffModal(idx){
   <div class="pg c2">
     <div class="field"><label>Full Name *</label><input id="rm_name" type="text" value="${s.name||''}"/></div>
     <div class="field"><label>Username *</label><input id="rm_username" type="text" value="${s.username||''}" ${!isNew?'readonly style="opacity:.6"':''}/></div>
-    <div class="field"><label>Department</label><input id="rm_dept" type="text" value="${s.dept||''}"/></div>
+    <div class="field"><label>Department</label>
+      <input id="rm_dept" type="text" value="${s.dept||''}" list="deptList" placeholder="Select or type department"/>
+      <datalist id="deptList">
+        <option value="ICT Department">
+        <option value="Engineering">
+        <option value="Business">
+        <option value="Architecture">
+        <option value="Administration">
+        <option value="Finance">
+        <option value="Human Resources">
+        <option value="Library">
+        <option value="Student Affairs">
+        <option value="Security">
+        <option value="Maintenance">
+        <option value="Contractor">
+        <option value="Part-Time Staff">
+      </datalist>
+    <div style="display:none"/></div>
     <div class="field"><label>College</label><input id="rm_college" type="text" value="${s.college||''}"/></div>
     <div class="field"><label>CPR Number *</label><input id="rm_cpr" type="text" value="${s.cpr||''}" maxlength="9"/></div>
     <div class="field"><label>Mobile</label><input id="rm_mobile" type="text" value="${s.mobile||''}"/></div>
@@ -2500,6 +2525,13 @@ function renderSK(){
       </div>`;
     } else {
       const isS=SK.type==='student';
+      // Load saved identity from this phone's localStorage
+      const savedKey='ku_identity_'+SK.type;
+      let saved=null;
+      try{saved=JSON.parse(localStorage.getItem(savedKey)||'null');}catch(e){}
+      const fieldLabel=isS?'Student ID':'CPR Number';
+      const fieldPlaceholder=isS?'Enter your Student ID':'Enter your CPR (include leading zeros)';
+      const savedVal=isS?(saved?.uid||''):(saved?.cpr||'');
       c.innerHTML=`
       <div class="sk-card">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
@@ -2508,15 +2540,13 @@ function renderSK(){
         </div>
         <div id="skFormAlert"></div>
         <div class="field">
-          <label>${isS?'Student ID Number':'Username or CPR Number'}</label>
-          <input id="sk_id" type="text" placeholder="Enter your ID" inputmode="${isS?'numeric':'text'}" autocomplete="off"/>
+          <label>${fieldLabel}</label>
+          <input id="sk_cpr" type="text" inputmode="text" placeholder="${fieldPlaceholder}" autocomplete="off" value="${savedVal}" style="font-size:18px;padding:12px;text-align:center;letter-spacing:2px"/>
+          ${savedVal?`<div class="hint" style="text-align:center;margin-top:4px">Saved from last visit — clear to enter a different ID</div>`:''}
         </div>
-        <div class="field">
-          <label>CPR Number</label>
-          <input id="sk_cpr" type="text" placeholder="9-digit CPR" maxlength="9" inputmode="numeric"/>
-        </div>
-        <button class="btn primary full lg" onclick="skVerify()">🔍 Verify &amp; ${SK.action==='in'?'Check In':'Check Out'}</button>
+        <button class="btn primary full lg" onclick="skVerify()">${SK.action==='in'?'✓ Check In':'✓ Check Out'}</button>
       </div>`;
+      setTimeout(()=>{const f=document.getElementById('sk_cpr');if(f){f.focus();f.select();}},100);
     }
   } else if(SK.step==='success'){
     const p=SK.person,isIn=SK.action==='in';
@@ -2547,68 +2577,73 @@ function skProceedType(){
   SK.step='form';renderSK();
 }
 async function skVerify(){
-  const id=(document.getElementById('sk_id')?.value||'').trim();
-  const cpr=(document.getElementById('sk_cpr')?.value||'').trim();
-  if(!id||!cpr){alert2('skFormAlert','error','Please fill in both fields.');return;}
+  const isS=SK.type==='student';
+  const lookupVal=(document.getElementById('sk_cpr')?.value||'').trim();
+  if(!lookupVal){alert2('skFormAlert','error',`Please enter your ${isS?'Student ID':'CPR number'}.`);return;}
 
   const btn=document.querySelector('#skInner .btn.primary.full.lg');
   if(btn){btn.textContent='Verifying…';btn.disabled=true;}
-  const restore=()=>{if(btn){btn.textContent=`🔍 Verify & ${SK.action==='in'?'Check In':'Check Out'}`;btn.disabled=false;}};
-
-  // Show debug info on screen
-  const debugEl=document.getElementById('skFormAlert');
-  const dbg=(msg)=>{if(debugEl)debugEl.innerHTML=`<div class="alert info" style="font-size:11px;font-family:var(--m)">${msg}</div>`;};
-
-  dbg(`Checking: ID="${id}" CPR="${cpr}" Type="${SK.type}"<br>SB_URL set: ${!!SUPABASE_URL}<br>supabase lib: ${!!window.supabase}<br>SB connected: ${sbConnected()}`);
+  const restore=()=>{if(btn){btn.textContent=SK.action==='in'?'✓ Check In':'✓ Check Out';btn.disabled=false;}};
 
   let found=null;
   let dbError='';
 
+  // Query Supabase directly with single field
   try{
     if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
       const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-      dbg(`Querying Supabase table: ${SK.type==='student'?'students':'staff'}…`);
-      if(SK.type==='student'){
-        const {data,error}=await freshSB.from('students').select('*').eq('uid',id).eq('cpr',cpr).limit(1);
-        dbg(`Student query result: data=${JSON.stringify(data)} error=${JSON.stringify(error)}`);
+      if(isS){
+        // Student: lookup by Student ID (uid) — exact string
+        const {data,error}=await freshSB.from('students').select('*').eq('uid',lookupVal).limit(1);
         if(data&&data.length>0) found=data[0];
         if(error) dbError=error.message;
-      } else if(SK.type==='staff'){
-        const {data,error}=await freshSB.from('staff').select('*').eq('username',id).eq('cpr',cpr).limit(1);
-        dbg(`Staff query result: data=${JSON.stringify(data)} error=${JSON.stringify(error)}`);
-        if(data&&data.length>0) found=data[0];
-        if(error) dbError=error.message;
-        if(!found){
-          const r=await freshSB.from('staff').select('*').eq('cpr',id).limit(1);
-          dbg(`Staff CPR query: data=${JSON.stringify(r.data)}`);
-          if(r.data&&r.data.length&&String(r.data[0].cpr||'').trim()===cpr) found=r.data[0];
+      } else {
+        // Staff: lookup by CPR — try exact, then zero-padded to 9 digits
+        let {data,error}=await freshSB.from('staff').select('*').eq('cpr',lookupVal).limit(1);
+        if((!data||!data.length)&&lookupVal.length<9){
+          const padded=lookupVal.padStart(9,'0');
+          const r2=await freshSB.from('staff').select('*').eq('cpr',padded).limit(1);
+          if(r2.data&&r2.data.length>0) data=r2.data;
         }
+        if(data&&data.length>0) found=data[0];
+        if(error) dbError=error.message;
       }
-    } else {
-      dbError=`Missing: URL=${!!SUPABASE_URL} KEY=${!!SUPABASE_KEY} lib=${!!window.supabase}`;
     }
-  }catch(e){
-    dbError=e.message||String(e);
-    dbg(`Exception: ${dbError}`);
-  }
+  }catch(e){dbError=e.message||String(e);}
 
-  // Fallback to in-memory
+  // Fallback to in-memory — also handle zero-padding
   if(!found){
-    const memCount=SK.type==='student'?S.db.students.length:S.db.staff.length;
-    dbg(`DB query returned nothing (${dbError}). Memory has ${memCount} records. Trying memory…`);
-    if(SK.type==='student') found=S.db.students.find(s=>String(s.uid||'').trim()===id&&String(s.cpr||'').trim()===cpr)||null;
-    else if(SK.type==='staff') found=S.db.staff.find(s=>(String(s.username||'').trim()===id||String(s.cpr||'').trim()===id)&&String(s.cpr||'').trim()===cpr)||null;
-    dbg(`Memory lookup: ${found?'FOUND '+found.name:'NOT FOUND'} | DB error was: ${dbError||'none'}`);
+    if(isS){
+      found=S.db.students.find(s=>String(s.uid||'').trim()===lookupVal)||null;
+    } else {
+      found=S.db.staff.find(s=>String(s.cpr||'').trim()===lookupVal)||null;
+      if(!found&&lookupVal.length<9){
+        const padded=lookupVal.padStart(9,'0');
+        found=S.db.staff.find(s=>String(s.cpr||'').trim()===padded)||null;
+      }
+    }
   }
 
   restore();
 
   if(!found){
-    alert2('skFormAlert','error',`❌ Not found.<br><small>ID: ${id} | CPR: ${cpr} | Type: ${SK.type}<br>DB error: ${dbError||'none'} | Memory records: ${SK.type==='student'?S.db.students.length:S.db.staff.length}</small>`);
+    alert2('skFormAlert','error',`❌ No ${SK.type} found with that ${isS?'Student ID':'CPR number'}. Please check and try again, or ask reception for help.`);
     return;
   }
 
-  const key=(found.uid||found.username)+'_'+SK.type;
+  // ---- Auto-save this person's identity to localStorage for next visit ----
+  try{
+    const savedKey='ku_identity_'+SK.type;
+    localStorage.setItem(savedKey,JSON.stringify({
+      uid:found.uid||'',
+      cpr:found.cpr||'',
+      name:found.name,
+      college:found.college||found.dept||'',
+      dept:found.dept||''
+    }));
+  }catch(e){}
+
+  const key=(found.uid||found.username||found.cpr)+'_'+SK.type;
 
   if(SK.action==='in'){
     let alreadyIn=!!S.inside[key];
@@ -2631,7 +2666,7 @@ async function skVerify(){
         if(data&&data.length>0) S.inside[key]={...JSON.parse(data[0].person_json),checkinTime:new Date(data[0].checkin_time)};
       }
     }catch(e){}
-    if(!S.inside[key]){alert2('skFormAlert','warn','⚠ No active check-in found for your ID.');return;}
+    if(!S.inside[key]){alert2('skFormAlert','warn','⚠ No active check-in found. If you checked in from reception, please ask for help.');return;}
     logEntry({...S.inside[key]},'out');
     dbCheckout(key);
     delete S.inside[key];
@@ -2658,11 +2693,18 @@ function skSubmitGuest(){
   SK.person=g;SK.step='success';
   updateBadge();refreshQRDisplay();renderSK();
 }
-function skGuestCheckout(){
+async function skGuestCheckout(){
   const cpr=(document.getElementById('sk_gOutCPR')?.value||'').trim();
-  if(!cpr){alert2('skFormAlert','error','Please enter your ID/CPR number.');return;}
+  if(!cpr){alert2('skFormAlert','error','Please enter your CPR/ID number.');return;}
   const key='G_'+cpr;
-  if(!S.inside[key]){alert2('skFormAlert','warn','No active check-in found for that ID.');return;}
+  if(!S.inside[key]&&SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
+    try{
+      const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+      const {data}=await freshSB.from('inside_now').select('*').eq('key',key).limit(1);
+      if(data&&data.length>0) S.inside[key]={...JSON.parse(data[0].person_json),checkinTime:new Date(data[0].checkin_time)};
+    }catch(e){}
+  }
+  if(!S.inside[key]){alert2('skFormAlert','warn','No active check-in found for that CPR/ID. Please ask reception for help.');return;}
   const p=S.inside[key];
   logEntry({...p},'out');
   dbCheckout(key);
