@@ -2017,34 +2017,86 @@ function renderStaffTable(list){
 }
 
 function renderGuestTable(list){
-  const rows=list.length===0?`<tr><td colspan="6"><div class="empty">No guests registered yet.</div></td></tr>`:
-    list.map((g,i)=>`<tr>
-      <td style="font-weight:600">${g.name}</td>
-      <td style="font-family:var(--m);font-size:11.5px;color:var(--text3)">${g.cpr||'—'}</td>
-      <td style="color:var(--text2)">${g.org||'—'}</td>
-      <td style="color:var(--text2)">${g.purpose||'—'}</td>
-      <td style="color:var(--text2)">${g.host||'—'}</td>
-      <td><button class="btn sm danger" onclick="deleteRecord('guest',${i})">✕</button></td>
-    </tr>`).join('');
+  if(list.length===0) return`
+  <div class="sh" style="margin-bottom:12px">
+    <div><div class="st">Guests</div><div class="ss">No registered visitors</div></div>
+  </div>
+  <div class="empty">No guests registered yet.</div>`;
+
+  const rows=list.map((g,i)=>`<tr id="grow_${i}">
+    <td style="width:36px;text-align:center">
+      <input type="checkbox" class="gchk" data-idx="${i}" onchange="updateGuestSelection()" style="width:15px;height:15px;cursor:pointer;accent-color:var(--ku)"/>
+    </td>
+    <td style="font-weight:600">${g.name}</td>
+    <td style="font-family:var(--m);font-size:11.5px;color:var(--text3)">${g.cpr||'—'}</td>
+    <td style="color:var(--text2)">${g.org||'—'}</td>
+    <td style="color:var(--text2)">${g.purpose||'—'}</td>
+    <td style="color:var(--text2)">${g.host||'—'}</td>
+    <td><button class="btn sm danger" onclick="deleteRecord('guest',${i})">✕</button></td>
+  </tr>`).join('');
+
   return`
   <div class="sh" style="margin-bottom:12px">
-    <div><div class="st">Guests</div><div class="ss">${list.length} registered visitors</div></div>
-    ${list.length>0?`<div style="display:flex;gap:8px">
-      <button class="btn sm danger" onclick="bulkDeleteGuests()">🗑 Delete All Guests</button>
-    </div>`:''}
+    <div><div class="st">Guests</div><div class="ss" id="guestSelCount">${list.length} registered visitors</div></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn sm danger ghost" id="btnDeleteSelected" onclick="bulkDeleteSelectedGuests()" style="display:none">🗑 Delete Selected</button>
+      <button class="btn sm danger" onclick="bulkDeleteGuests()">🗑 Delete All</button>
+    </div>
   </div>
   <div class="tbl-wrap"><table>
-    <thead><tr><th>Name</th><th>CPR / ID</th><th>Organization</th><th>Purpose</th><th>Host</th><th style="width:60px"></th></tr></thead>
+    <thead><tr>
+      <th style="width:36px;text-align:center">
+        <input type="checkbox" id="gChkAll" onchange="toggleAllGuests(this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--ku)" title="Select all"/>
+      </th>
+      <th>Name</th><th>CPR / ID</th><th>Organization</th><th>Purpose</th><th>Host</th><th style="width:60px"></th>
+    </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
 
+function toggleAllGuests(checked){
+  document.querySelectorAll('.gchk').forEach(cb=>cb.checked=checked);
+  updateGuestSelection();
+}
+
+function updateGuestSelection(){
+  const all=document.querySelectorAll('.gchk');
+  const selected=[...all].filter(cb=>cb.checked);
+  const count=selected.length;
+  const selBtn=document.getElementById('btnDeleteSelected');
+  const countEl=document.getElementById('guestSelCount');
+  const allChk=document.getElementById('gChkAll');
+  if(selBtn) selBtn.style.display=count>0?'':'none';
+  if(selBtn) selBtn.textContent=`🗑 Delete Selected (${count})`;
+  if(countEl) countEl.textContent=count>0?`${count} of ${S.db.guests.length} selected`:S.db.guests.length+' registered visitors';
+  if(allChk) allChk.indeterminate=count>0&&count<all.length;
+  if(allChk&&count===all.length) allChk.checked=true;
+  if(allChk&&count===0) allChk.checked=false;
+}
+
+async function bulkDeleteSelectedGuests(){
+  const selected=[...document.querySelectorAll('.gchk:checked')].map(cb=>parseInt(cb.dataset.idx));
+  if(!selected.length) return;
+  if(!confirm(`Delete ${selected.length} selected guest record${selected.length>1?'s':''}? This cannot be undone.`)) return;
+  const toDelete=selected.map(i=>S.db.guests[i]).filter(Boolean);
+  const ids=toDelete.map(g=>g.id).filter(Boolean);
+  try{
+    if(ids.length&&SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
+      const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+      await freshSB.from('guests').delete().in('id',ids);
+    }
+    // Remove from memory (reverse order to keep indices valid)
+    selected.sort((a,b)=>b-a).forEach(i=>S.db.guests.splice(i,1));
+    renderDBManage(document.getElementById('mc'));
+  }catch(e){alert('Delete failed: '+e.message);}
+}
+
 async function bulkDeleteGuests(){
-  if(!confirm('Delete ALL '+S.db.guests.length+' guest records from the database? This cannot be undone.')) return;
+  if(!confirm('Delete ALL '+S.db.guests.length+' guest records? This cannot be undone.')) return;
   try{
     if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){
       const freshSB=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-      await freshSB.from('guests').delete().neq('id',0); // delete all rows
+      await freshSB.from('guests').delete().neq('id',0);
     }
     S.db.guests=[];
     renderDBManage(document.getElementById('mc'));
